@@ -1,0 +1,368 @@
+{
+  "name": "Gaming Article Desk (GPT)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1328,
+        112
+      ],
+      "id": "8f423fb4-2135-4965-95df-206c99fba86e"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "topicsCount",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "a2",
+              "name": "language",
+              "value": "english",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "anchorText",
+              "value": "1111",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "targetUrl",
+              "value": "1111",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1104,
+        112
+      ],
+      "id": "da9d9802-6cbd-4051-aa63-66a0584afdbb"
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $input.first().json;\n\nconst topicSystem = `Ты — SEO-редактор в гейминг-нише. Твоя задача — предложить свежие, актуальные темы для статей, основываясь на реальных новостях и тенденциях индустрии за последние недели. Используй веб-поиск, чтобы темы были действительно актуальными (обновления игр, релизы, события, патчи, турниры), а не абстрактными \"вечнозелёными\" формулировками.\n\nВерни ТОЛЬКО JSON-массив без markdown-обёртки и без пояснений, строго в формате:\n[{\"topic\": \"конкретная тема статьи\", \"language\": \"${config.language}\"}]\n\nТемы должны быть:\n- на языке ${config.language}\n- конкретными, не абстрактными (не \"лучшие игры 2026\", а например \"Почему патч 2.3 в Baldur's Gate 3 разозлил часть фанатов\")\n- пригодными для гейминг-блога с уклоном в линкбилдинг`;\n\nconst topicUserMessage = `Предложи ${config.topicsCount} актуальных тем для статей на языке ${config.language}.`;\n\nreturn [{ json: { ...config, topicSystem, topicUserMessage } }];"
+      },
+      "name": "Build Topic Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        112
+      ],
+      "id": "0cab321c-5034-4b94-a209-f9391cab6c5d"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/responses",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_OPENAI_API_KEY"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"gpt-4o\", tools: [{ type: \"web_search_preview\" }], input: [{ role: \"system\", content: $json.topicSystem }, { role: \"user\", content: $json.topicUserMessage }] }) }}",
+        "options": {}
+      },
+      "name": "Generate Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -656,
+        112
+      ],
+      "id": "6eb228ca-12b1-4483-9f69-bc2616e89b6a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst messageItem = (response.output || []).find(o => o.type === 'message');\nif (!messageItem) {\n  throw new Error('OpenAI не вернул сообщение с темами. Проверь ответ API: ' + JSON.stringify(response).slice(0, 500));\n}\nconst textPart = (messageItem.content || []).find(c => c.type === 'output_text');\nif (!textPart) {\n  throw new Error('Нет текстового content в сообщении OpenAI.');\n}\n\nlet raw = textPart.text.trim();\nraw = raw.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/```$/,'').trim();\n\nlet topics;\ntry {\n  topics = JSON.parse(raw);\n} catch (e) {\n  throw new Error('Не удалось распарсить JSON тем: ' + raw);\n}\n\nconst config = $('Config').first().json;\n\nreturn topics.map(t => ({\n  json: {\n    topic: t.topic,\n    language: t.language || config.language,\n    anchorText: config.anchorText,\n    targetUrl: config.targetUrl\n  }\n}));"
+      },
+      "name": "Parse Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        112
+      ],
+      "id": "db7eef79-1a73-44be-8929-2a8bfca79412"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "name": "Loop Over Topics",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -224,
+        112
+      ],
+      "id": "a8879df7-17d8-438a-83d6-016a6483a361"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nconst systemPromptTemplate = `ROLE\\nТы — опытный гейм-журналист и обзорщик, который пишет для нишевых игровых блогов и медиа. У тебя за плечами 8+ лет игрового опыта, ты сам активно играешь, следишь за индустрией, у тебя есть личные предпочтения, вкусы и даже пара \\\"спорных\\\" мнений о жанрах/играх. Ты пишешь НЕ как нейтральная справочная система, а как живой человек с характером.\\n\\nЯЗЫК СТАТЬИ: {{LANGUAGE}}\\nПиши весь текст статьи ТОЛЬКО на этом языке, думай сразу на нём, а не переводи с английского. Используй актуальный игровой сленг и обороты, естественные для носителей {{LANGUAGE}}.\\n\\nОБЪЁМ: 2500–3500 символов (считая пробелы). Строго придерживайся этого диапазона.\\n\\nЖЁСТКИЕ ЗАПРЕТЫ:\\n- Шаблонные вступления и клише \\\"в мире гейминга\\\", \\\"сегодня мы поговорим о\\\", \\\"в современном игровом сообществе\\\"\\n- Канцелярские связки: \\\"более того\\\", \\\"нельзя не отметить\\\", \\\"таким образом\\\", \\\"в заключение\\\", \\\"стоит отметить, что\\\"\\n- Дженерик-фразы вроде \\\"это меняет правила игры\\\", \\\"будущее уже здесь\\\"\\n- Симметричные списки из одинаковых по длине пунктов\\n- Финальный абзац-вывод, пересказывающий статью\\n- Идеально гладкий синтаксис без единой разговорной шероховатости\\n- Избыточные превосходные степени (не чаще 1 раза на статью)\\n\\nЕсли {{LANGUAGE}} = français / French, дополнительно запрещены:\\n- Вступление-контраст \\\"Il y a X qui... Et puis il y a ceux/celles qui...\\\"\\n- \\\"Dès les premières minutes, on comprend que...\\\", \\\"D'emblée, on constate que...\\\"\\n- \\\"Au-delà de X, la plateforme propose également...\\\", \\\"Il convient de noter que...\\\", \\\"Force est de constater que...\\\", \\\"Cela dit,\\\"\\n- Повтор одной конструкции \\\"La plateforme propose/utilise/permet...\\\" в начале нескольких абзацев подряд\\n- \\\"En somme\\\", \\\"pour conclure\\\", \\\"au final, il s'agit d'une expérience complète\\\"\\n\\nПРАВИЛО ПРО СПИСКИ:\\nЕсли тема требует перечисления — вплетай его в связный текст, а не превращай в аккуратный маркированный список. Если список всё же нужен, делай пункты разной длины и структуры. Максимум один маркированный список на статью.\\n\\nЧТО ДЕЛАТЬ ВМЕСТО ЭТОГО:\\n1. Рваный ритм: чередуй короткие и длинные предложения.\\n2. Личная позиция от первого лица минимум 1-2 раза в статье.\\n3. Конкретика вместо общих слов: цифры, названия, конкретные детали.\\n4. Разговорные вставки и риторические вопросы (умеренно, 2-3 раза).\\n5. Естественные несовершенства синтаксиса, лёгкая ирония.\\n6. Живой заголовок и вступление с конкретной ситуацией или неожиданным фактом, без формального определения темы.\\n\\nССЫЛКА:\\n{{LINK_INSTRUCTION}}\\n\\nСТРУКТУРА: заголовок — зацепка во вступлении — 2-4 живых смысловых блока (подзаголовки не шаблонные) — органичное упоминание ссылки в контексте — финал без клише-резюме, можно закончить открытым вопросом или личным выводом.\\n\\nВыдай ТОЛЬКО финальный текст статьи на {{LANGUAGE}}. Без пояснений, без заголовка вида \\\"Статья:\\\", без markdown-разметки заголовков.`;\n\nconst linkInstruction = `Вставь один раз ссылку с анкором \\\"${item.anchorText}\\\" на адрес \\\"${item.targetUrl}\\\" органично, в контексте — как рекомендацию автора, не рекламной вставкой отдельным абзацем.`;\n\nconst system = systemPromptTemplate\n  .replaceAll('{{LANGUAGE}}', item.language)\n  .replace('{{LINK_INSTRUCTION}}', linkInstruction);\n\nreturn [{\n  json: {\n    ...item,\n    system,\n    userMessage: `Тема статьи: ${item.topic}`\n  }\n}];"
+      },
+      "name": "Build Article Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "701ce0ac-d769-4d54-8731-245f18d3fa9a"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_OPENAI_API_KEY"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"gpt-4o\", max_tokens: 1200, messages: [{ role: \"system\", content: $json.system }, { role: \"user\", content: $json.userMessage }] }) }}",
+        "options": {}
+      },
+      "name": "Generate Article",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "535a1f21-b500-43f5-a443-90f09da2ed01"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst articleText = (response.choices?.[0]?.message?.content || '').trim();\nconst prev = $('Build Article Prompt').first().json;\n\nconst safeName = (prev.topic || 'article')\n  .slice(0, 60)\n  .replace(/[\\\\/:*?\"<>|]+/g, '-')\n  .replace(/\\s+/g, ' ')\n  .trim();\nconst fileName = `${safeName} [${prev.language}].txt`;\n\nreturn [{\n  json: {\n    topic: prev.topic,\n    language: prev.language,\n    anchorText: prev.anchorText,\n    targetUrl: prev.targetUrl,\n    articleText,\n    charCount: articleText.length,\n    fileName\n  }\n}];"
+      },
+      "name": "Extract Article",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "b85784d3-18a3-47b6-9ec1-f306fb6bcec5"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "articleText",
+        "options": {
+          "encoding": "utf8",
+          "fileName": "={{ $json.fileName }}"
+        }
+      },
+      "name": "Convert to File",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        0
+      ],
+      "id": "1499eccb-69b9-4e4d-bce1-2b65ff010bf0"
+    },
+    {
+      "parameters": {
+        "name": "={{ $json.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "YOUR_DRIVE_FOLDER_ID",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "name": "Save to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        880,
+        0
+      ],
+      "id": "f2cefd45-7970-44e3-9e49-8c2e8c724e9c",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Drive account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Build Topic Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Topic Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Topics": {
+      "main": [
+        [
+          {
+            "node": "Parse Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Topics": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Topics": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Article Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Article Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Article": {
+      "main": [
+        [
+          {
+            "node": "Extract Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Article": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Save to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "1a19f79a-5932-4b06-8571-8e628c845b32",
+  "nodeGroups": [],
+  "id": "sNgVoMNKXpbolFoX",
+  "tags": []
+}
